@@ -1,26 +1,32 @@
-import requests
-import math
-import threading
-import tkinter
-import tkinter.ttk as ttk
-import tkinter.messagebox
-import time
-import PIL
-import sys
 import io
+import math
 import sqlite3
-import pyperclip
-import geocoder
-from PIL import Image, ImageTk
-from typing import Callable, List, Dict, Union, Tuple
+import sys
+import threading
+import time
+import tkinter
+import tkinter.messagebox
+import tkinter.ttk as ttk
+import traceback
 from functools import partial
+from io import BytesIO
+from typing import Callable, Dict, List, Tuple, Union
 
-from .canvas_position_marker import CanvasPositionMarker
-from .canvas_tile import CanvasTile
-from .utility_functions import decimal_to_osm, osm_to_decimal
+import geocoder
+import PIL
+import pyperclip
+import requests
+from PIL import Image, ImageTk
+
+from tkintermapview.canvas_circle_marker import CanvasCircleMarker
+from tkintermapview.offline_loading import create_db_tables
+
 from .canvas_button import CanvasButton
 from .canvas_path import CanvasPath
 from .canvas_polygon import CanvasPolygon
+from .canvas_position_marker import CanvasPositionMarker
+from .canvas_tile import CanvasTile
+from .utility_functions import decimal_to_osm, osm_to_decimal
 
 
 class TkinterMapView(tkinter.Frame):
@@ -32,10 +38,12 @@ class TkinterMapView(tkinter.Frame):
                  database_path: str = None,
                  use_database_only: bool = False,
                  max_zoom: int = 19,
+                 n_threads: int = 5,
                  **kwargs):
         super().__init__(*args, **kwargs)
 
         self.running = True
+        self._n_threads = n_threads
 
         self.width = width
         self.height = height
@@ -143,7 +151,7 @@ class TkinterMapView(tkinter.Frame):
         self.image_load_thread_pool: List[threading.Thread] = []
 
         # add background threads which load tile images from self.image_load_queue_tasks
-        for i in range(25):
+        for i in range(self._n_threads):
             image_load_thread = threading.Thread(daemon=True, target=self.load_images_background)
             image_load_thread.start()
             self.image_load_thread_pool.append(image_load_thread)
@@ -218,7 +226,7 @@ class TkinterMapView(tkinter.Frame):
         def click_coordinates_event():
             try:
                 pyperclip.copy(f"{coordinate_mouse_pos[0]:.7f} {coordinate_mouse_pos[1]:.7f}")
-                tkinter.messagebox.showinfo(title="", message="Coordinates copied to clipboard!")
+                # tkinter.messagebox.showinfo(title="", message="Coordinates copied to clipboard!")
 
             except Exception as err:
                 if sys.platform.startswith("linux"):
@@ -370,6 +378,12 @@ class TkinterMapView(tkinter.Frame):
         self.canvas_marker_list.append(marker)
         return marker
 
+    def set_circle(self, deg_x: float, deg_y: float, radius: int = 10, **kwargs) -> CanvasPositionMarker:
+        circle = CanvasCircleMarker(self, (deg_x, deg_y), radius=radius, **kwargs)
+        circle.draw()
+        self.canvas_marker_list.append(circle)
+        return circle
+
     def set_path(self, position_list: list, **kwargs) -> CanvasPath:
         path = CanvasPath(self, position_list, **kwargs)
         path.draw()
@@ -418,6 +432,7 @@ class TkinterMapView(tkinter.Frame):
 
         if self.database_path is not None:
             db_connection = sqlite3.connect(self.database_path)
+            create_db_tables(db_connection)
             db_cursor = db_connection.cursor()
         else:
             db_cursor = None
@@ -462,7 +477,7 @@ class TkinterMapView(tkinter.Frame):
                 for key in keys_to_delete:
                     del self.tile_image_cache[key]
 
-    def request_image(self, zoom: int, x: int, y: int, db_cursor=None) -> ImageTk.PhotoImage:
+    def request_image(self, zoom: int, x: int, y: int, db_cursor=None, db_connection=None) -> ImageTk.PhotoImage:
 
         # if database is available check first if tile is in database, if not try to use server
         if db_cursor is not None:
@@ -493,11 +508,14 @@ class TkinterMapView(tkinter.Frame):
         # try to get the tile from the server
         try:
             url = self.tile_server.replace("{x}", str(x)).replace("{y}", str(y)).replace("{z}", str(zoom))
-            image = Image.open(requests.get(url, stream=True, headers={"User-Agent": "TkinterMapView"}).raw)
+            image_resp = requests.get(url, stream=True, headers={"User-Agent": "TkinterMapView"})
+            image_raw = image_resp.content
+            image = Image.open(BytesIO(image_raw))
 
             if self.overlay_tile_server is not None:
                 url = self.overlay_tile_server.replace("{x}", str(x)).replace("{y}", str(y)).replace("{z}", str(zoom))
-                image_overlay = Image.open(requests.get(url, stream=True, headers={"User-Agent": "TkinterMapView"}).raw)
+                image_resp = requests.get(url, stream=True, headers={"User-Agent": "TkinterMapView"})
+                image_overlay = Image.open(image_resp.raw)
                 image = image.convert("RGBA")
                 image_overlay = image_overlay.convert("RGBA")
 
@@ -511,7 +529,11 @@ class TkinterMapView(tkinter.Frame):
             else:
                 return self.empty_tile_image
 
+            if self.database_path is not None:
+                self.insert_tile_in_db(zoom, x, y, image_raw, db_cursor=db_cursor, db_connection=db_connection)
+
             self.tile_image_cache[f"{zoom}{x}{y}"] = image_tk
+            # print("Got tile from server!: ", url)
             return image_tk
 
         except PIL.UnidentifiedImageError:  # image does not exist for given coordinates
@@ -521,8 +543,22 @@ class TkinterMapView(tkinter.Frame):
         except requests.exceptions.ConnectionError:
             return self.empty_tile_image
 
-        except Exception:
+        except Exception as excp:
+            print(excp)
+            print(traceback.format_exc())
             return self.empty_tile_image
+
+    def insert_tile_in_db(self, zoom: int, x: int, y: int, image: bytes, db_cursor=None, db_connection=None):
+        if db_cursor is not None and db_connection is not None:
+            try:
+                db_cursor.execute("""INSERT or REPLACE INTO tiles (zoom, x, y, tile_image, server) VALUES (?, ?, ?, ?, ?);""",
+                                  (zoom, x, y, image, self.tile_server))
+                db_connection.commit()
+                print("Inserting tile into database!", f"{x}-{y}-{zoom}")
+            except Exception as excp:
+                print("Error inserting tile into database!", f"{x}-{y}-{zoom}")
+                print(excp)
+                pass
 
     def get_tile_image_from_cache(self, zoom: int, x: int, y: int):
         if f"{zoom}{x}{y}" not in self.tile_image_cache:
@@ -536,6 +572,7 @@ class TkinterMapView(tkinter.Frame):
             db_cursor = db_connection.cursor()
         else:
             db_cursor = None
+            db_connection = None
 
         while self.running:
             if len(self.image_load_queue_tasks) > 0:
@@ -548,7 +585,7 @@ class TkinterMapView(tkinter.Frame):
 
                 image = self.get_tile_image_from_cache(zoom, x, y)
                 if image is False:
-                    image = self.request_image(zoom, x, y, db_cursor=db_cursor)
+                    image = self.request_image(zoom, x, y, db_cursor=db_cursor, db_connection=db_connection)
                     if image is None:
                         self.image_load_queue_tasks.append(task)
                         continue
@@ -558,6 +595,8 @@ class TkinterMapView(tkinter.Frame):
 
             else:
                 time.sleep(0.01)
+        if db_connection is not None:
+            db_connection.close()
 
     def update_canvas_tile_images(self):
 

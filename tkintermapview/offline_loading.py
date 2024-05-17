@@ -1,10 +1,11 @@
-import os
-import time
-import sqlite3
-import threading
-import requests
-import sys
 import math
+import os
+import sqlite3
+import sys
+import threading
+import time
+
+import requests
 from PIL import Image, UnidentifiedImageError
 
 from .utility_functions import decimal_to_osm, osm_to_decimal
@@ -206,3 +207,34 @@ class OfflineLoader:
 
         db_connection.close()
         return
+
+def create_db_tables(db_connection):
+    """Create tables for the offline tiles database."""
+    db_cursor = db_connection.cursor()
+    # create tables if it not exists
+    create_server_table = """CREATE TABLE IF NOT EXISTS server (
+                                    url VARCHAR(300) PRIMARY KEY NOT NULL,
+                                    max_zoom INTEGER NOT NULL);"""
+
+    create_tiles_table = """CREATE TABLE IF NOT EXISTS tiles (
+                                    zoom INTEGER NOT NULL,
+                                    x INTEGER NOT NULL,
+                                    y INTEGER NOT NULL,
+                                    server VARCHAR(300) NOT NULL,
+                                    tile_image BLOB NOT NULL,
+                                    CONSTRAINT fk_server FOREIGN KEY (server) REFERENCES server (url),
+                                    CONSTRAINT pk_tiles PRIMARY KEY (zoom, x, y, server));"""
+
+    create_sections_table = """CREATE TABLE IF NOT EXISTS sections (
+                                        position_a VARCHAR(100) NOT NULL,
+                                        position_b VARCHAR(100) NOT NULL,
+                                        zoom_a INTEGER NOT NULL,
+                                        zoom_b INTEGER NOT NULL,
+                                        server VARCHAR(300) NOT NULL,
+                                        CONSTRAINT fk_server FOREIGN KEY (server) REFERENCES server (url),
+                                        CONSTRAINT pk_tiles PRIMARY KEY (position_a, position_b, zoom_a, zoom_b, server));"""
+
+    db_cursor.execute(create_server_table)
+    db_cursor.execute(create_tiles_table)
+    db_cursor.execute(create_sections_table)
+    db_connection.commit()

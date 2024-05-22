@@ -331,7 +331,7 @@ class TkinterMapView(tkinter.Frame):
 
         self.check_map_border_crossing()
         self.draw_initial_array()
-        # self.draw_move() ausreichend?
+        # self.draw_move() enough?
 
         return marker_object
 

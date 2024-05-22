@@ -18,7 +18,7 @@ import pyperclip
 import requests
 from PIL import Image, ImageTk
 
-from tkintermapview.canvas_circle_marker import CanvasCircleMarker
+from tkintermapview.canvas_rect_marker import CanvasRectMarker
 from tkintermapview.offline_loading import create_db_tables
 
 from .canvas_button import CanvasButton
@@ -151,7 +151,7 @@ class TkinterMapView(tkinter.Frame):
         self.image_load_thread_pool: List[threading.Thread] = []
 
         # add background threads which load tile images from self.image_load_queue_tasks
-        for i in range(self._n_threads):
+        for _ in range(self._n_threads):
             image_load_thread = threading.Thread(daemon=True, target=self.load_images_background)
             image_load_thread.start()
             self.image_load_thread_pool.append(image_load_thread)
@@ -378,8 +378,8 @@ class TkinterMapView(tkinter.Frame):
         self.canvas_marker_list.append(marker)
         return marker
 
-    def set_circle(self, deg_x: float, deg_y: float, radius: int = 10, **kwargs) -> CanvasPositionMarker:
-        circle = CanvasCircleMarker(self, (deg_x, deg_y), radius=radius, **kwargs)
+    def set_rect(self, deg_x: float, deg_y: float, radius: int = 10, **kwargs) -> CanvasPositionMarker:
+        circle = CanvasRectMarker(self, (deg_x, deg_y), radius=radius, **kwargs)
         circle.draw()
         self.canvas_marker_list.append(circle)
         return circle
@@ -554,7 +554,7 @@ class TkinterMapView(tkinter.Frame):
                 db_cursor.execute("""INSERT or REPLACE INTO tiles (zoom, x, y, tile_image, server) VALUES (?, ?, ?, ?, ?);""",
                                   (zoom, x, y, image, self.tile_server))
                 db_connection.commit()
-                print("Inserting tile into database!", f"{x}-{y}-{zoom}")
+                # print("Inserting tile into database!", f"{x}-{y}-{zoom}")
             except Exception as excp:
                 print("Error inserting tile into database!", f"{x}-{y}-{zoom}")
                 print(excp)
@@ -599,7 +599,6 @@ class TkinterMapView(tkinter.Frame):
             db_connection.close()
 
     def update_canvas_tile_images(self):
-
         while len(self.image_load_queue_results) > 0 and self.running:
             # result queue structure: [((zoom, x, y), corresponding canvas tile object, tile image), ... ]
             result = self.image_load_queue_results.pop(0)
@@ -611,7 +610,6 @@ class TkinterMapView(tkinter.Frame):
             # check if zoom level of result is still up to date, otherwise don't update image
             if zoom == round(self.zoom):
                 canvas_tile.set_image(image)
-
         # This function calls itself every 10 ms with tk.after() so that the image updates come
         # from the main GUI thread, because tkinter can only be updated from the main thread.
         if self.running:

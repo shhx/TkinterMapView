@@ -223,9 +223,10 @@ class TkinterMapView(tkinter.Frame):
     def mouse_right_click(self, event):
         coordinate_mouse_pos = self.convert_canvas_coords_to_decimal_coords(event.x, event.y)
 
+        text = f"{coordinate_mouse_pos[0]:.7f}, {coordinate_mouse_pos[1]:.7f}"
         def click_coordinates_event():
             try:
-                pyperclip.copy(f"{coordinate_mouse_pos[0]:.7f} {coordinate_mouse_pos[1]:.7f}")
+                pyperclip.copy(text)
                 # tkinter.messagebox.showinfo(title="", message="Coordinates copied to clipboard!")
 
             except Exception as err:
@@ -235,8 +236,7 @@ class TkinterMapView(tkinter.Frame):
                     tkinter.messagebox.showinfo(title="", message="Error copying to clipboard.\n" + str(err))
 
         m = tkinter.Menu(self, tearoff=0)
-        m.add_command(label=f"{coordinate_mouse_pos[0]:.7f} {coordinate_mouse_pos[1]:.7f}",
-                      command=click_coordinates_event)
+        m.add_command(label=text, command=click_coordinates_event)
 
         if len(self.right_click_menu_commands) > 0:
             m.add_separator()

@@ -1,5 +1,5 @@
-import tkinter
 import sys
+import tkinter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -32,6 +32,7 @@ class CanvasPath:
 
         self.last_upper_left_tile_pos = None
         self.last_position_list_length = len(self.position_list)
+        self._mouse_marker = None
 
     def delete(self):
         if self in self.map_widget.canvas_path_list:
@@ -74,10 +75,23 @@ class CanvasPath:
 
     def mouse_leave(self, event=None):
         self.map_widget.canvas.config(cursor="arrow")
+        if self._mouse_marker is not None:
+            self.map_widget.canvas.delete(self._mouse_marker)
+            self._mouse_marker = None
+
+    def mouse_move(self, event=None):
+        size = 15
+        x0, y0 = event.x - size/2, event.y - size/2
+        x1, y1 = x0 + size, y0 + size
+        if self._mouse_marker is not None:
+            self.map_widget.canvas.coords(self._mouse_marker, x0, y0, x1, y1)
+        else:
+            self._mouse_marker = self.map_widget.canvas.create_oval(x0, y0, x1, y1, fill="red")
+        self.map_widget.canvas.lift(self.canvas_line)
 
     def click(self, event=None):
         if self.command is not None:
-            self.command(self)
+            self.command(event)
 
     def draw(self, move=False):
         new_line_length = self.last_position_list_length != len(self.position_list)
@@ -121,3 +135,16 @@ class CanvasPath:
         self.map_widget.manage_z_order()
         self.last_upper_left_tile_pos = self.map_widget.upper_left_tile_pos
 
+    def set_command(self, command):
+        self.command = command
+        if self.command is not None:
+            self.map_widget.canvas.tag_bind(self.canvas_line, "<Enter>", self.mouse_enter)
+            self.map_widget.canvas.tag_bind(self.canvas_line, "<Leave>", self.mouse_leave)
+            self.map_widget.canvas.tag_bind(self.canvas_line, "<Button-1>", self.click)
+            self.map_widget.canvas.tag_bind(self.canvas_line, "<Motion>", self.mouse_move)
+        else:
+            self.map_widget.canvas.tag_unbind(self.canvas_line, "<Enter>")
+            self.map_widget.canvas.tag_unbind(self.canvas_line, "<Leave>")
+            self.map_widget.canvas.tag_unbind(self.canvas_line, "<Button-1>")
+            self.map_widget.canvas.tag_unbind(self.canvas_line, "<Motion>")
+            self.mouse_leave()

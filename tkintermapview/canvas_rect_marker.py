@@ -49,6 +49,7 @@ class CanvasRectMarker:
         self.canvas_image = None
         self.canvas_icon = None
         self.text_background = None
+        self._hovering = False
 
     def delete(self):
         if self in self.map_widget.canvas_marker_list:
@@ -79,6 +80,7 @@ class CanvasRectMarker:
             self.map_widget.canvas.itemconfigure(self.canvas_icon, image=self.icon)
 
     def mouse_enter(self, event=None):
+        self._hovering = True
         if sys.platform == "darwin":
             self.map_widget.canvas.config(cursor="pointinghand")
         elif sys.platform.startswith("win"):
@@ -86,24 +88,14 @@ class CanvasRectMarker:
         else:
             self.map_widget.canvas.config(cursor="hand2")  # not tested what it looks like on Linux!
         if self.text is not None:
-            canvas_pos_x, canvas_pos_y = self.get_canvas_pos(self.position)
-            offset = self.radius + 10
-            self.canvas_text = self.map_widget.canvas.create_text(canvas_pos_x + offset, canvas_pos_y + offset, font=self.font,
-                                                                  text=self.text, fill=self.text_color, tag="marker")
-            text_size = self.map_widget.canvas.bbox(self.canvas_text)
-            #move by half the text size to center the text
-            self.map_widget.canvas.coords(self.canvas_text, canvas_pos_x + offset + (text_size[2] - text_size[0]) / 2,
-                                       canvas_pos_y + offset + (text_size[3] - text_size[1]) / 2)
-            text_size = self.map_widget.canvas.bbox(self.canvas_text)
-            self.text_background = self.map_widget.canvas.create_rectangle(text_size[0] - 5, text_size[1] - 5,
-                                                                           text_size[2] + 5, text_size[3] + 5,
-                                                                           fill=self.text_bg_color, outline="black", tag="marker")
-            self.map_widget.canvas.lift(self.canvas_text)
+            self._draw_hover_text()
 
     def mouse_leave(self, event=None):
+        self._hovering = False
         self.map_widget.canvas.config(cursor="arrow")
         if self.canvas_text is not None:
             self.map_widget.canvas.delete(self.canvas_text)
+        if self.text_background is not None:
             self.map_widget.canvas.delete(self.text_background)
 
     def click(self, event=None):
@@ -119,27 +111,51 @@ class CanvasRectMarker:
 
         return canvas_pos_x, canvas_pos_y
 
+    def _draw_icon(self, x, y, event=None):
+        if self.canvas_icon is None:
+            self.canvas_icon = self.map_widget.canvas.create_image(x, y,
+                                                                    anchor=self.icon_anchor,
+                                                                    image=self.icon,
+                                                                    tag="marker")
+            if self.text is not None:
+                self.map_widget.canvas.tag_bind(self.canvas_icon, "<Enter>", self.mouse_enter)
+                self.map_widget.canvas.tag_bind(self.canvas_icon, "<Leave>", self.mouse_leave)
+            if self.command is not None:
+                self.map_widget.canvas.tag_bind(self.canvas_icon, "<Button-1>", self.click)
+        else:
+            self.map_widget.canvas.coords(self.canvas_icon, x, y)
+
+    def _draw_hover_text(self):
+        canvas_pos_x, canvas_pos_y = self.get_canvas_pos(self.position)
+        offset = self.radius + 10
+        if self.canvas_text:
+            self.map_widget.canvas.delete(self.canvas_text)
+        if self.text_background:
+            self.map_widget.canvas.delete(self.text_background)
+        #Render text off canvas to get the size of the text
+        self.canvas_text = self.map_widget.canvas.create_text(-100, -100, font=self.font, text=self.text, fill=self.text_color)
+        text_size = self.map_widget.canvas.bbox(self.canvas_text)
+        if text_size is None:
+            return
+        text_size_diff = (text_size[2] - text_size[0], text_size[3] - text_size[1])
+        #move by half the text size to center the text
+        self.map_widget.canvas.coords(self.canvas_text, canvas_pos_x + offset + text_size_diff[0] / 2,
+                                canvas_pos_y + offset + text_size_diff[1] / 2)
+        text_size = (canvas_pos_x + offset, canvas_pos_y + offset,
+                     text_size_diff[0] + canvas_pos_x + offset, text_size_diff[1] + canvas_pos_y + offset)
+        self.text_background = self.map_widget.canvas.create_rectangle(text_size[0] - 5, text_size[1] - 5,
+                                                                    text_size[2] + 5, text_size[3] + 5,
+                                                                    fill=self.text_bg_color, outline="black")
+        self.map_widget.canvas.lift(self.canvas_text)
+
     def draw(self, event=None):
         canvas_pos_x, canvas_pos_y = self.get_canvas_pos(self.position)
 
         if not self.deleted:
             if 0 - 50 < canvas_pos_x < self.map_widget.width + 50 and 0 < canvas_pos_y < self.map_widget.height + 70:
-
                 # draw icon image for marker
                 if self.icon is not None:
-                    if self.canvas_icon is None:
-                        self.canvas_icon = self.map_widget.canvas.create_image(canvas_pos_x, canvas_pos_y,
-                                                                               anchor=self.icon_anchor,
-                                                                               image=self.icon,
-                                                                               tag="marker")
-                        if self.text is not None:
-                            self.map_widget.canvas.tag_bind(self.canvas_icon, "<Enter>", self.mouse_enter)
-                            self.map_widget.canvas.tag_bind(self.canvas_icon, "<Leave>", self.mouse_leave)
-                        if self.command is not None:
-                            self.map_widget.canvas.tag_bind(self.canvas_icon, "<Button-1>", self.click)
-                    else:
-                        self.map_widget.canvas.coords(self.canvas_icon, canvas_pos_x, canvas_pos_y)
-
+                    self._draw_icon(canvas_pos_x, canvas_pos_y, event)
                 # draw standard icon shape
                 else:
                     x0, y0 = canvas_pos_x - self.radius, canvas_pos_y - self.radius
@@ -154,7 +170,10 @@ class CanvasRectMarker:
                             self.map_widget.canvas.tag_bind(self.circle, "<Button-1>", self.click)
                     else:
                         self.map_widget.canvas.coords(self.circle, x0, y0, x1, y1)
+                if self.text is not None and self._hovering:
+                    self._draw_hover_text()
             else:
+                self.mouse_leave()
                 self.map_widget.canvas.delete(self.canvas_icon)
                 self.map_widget.canvas.delete(self.circle)
                 self.map_widget.canvas.delete(self.canvas_image)
